@@ -6,9 +6,6 @@
 #include "ESP32_OV5640_AF.h"
 #include <Preferences.h>
 
-// ==========================================
-// 1. KHAI BÁO BIẾN TOÀN CỤC & PHẦN CỨNG
-// ==========================================
 OV5640 ov5640 = OV5640();
 httpd_handle_t camera_httpd = NULL;
 Preferences prefs;
@@ -34,9 +31,7 @@ String lastSsidTried = "Connecting...";
 
 void takeSnapshot();
 
-// ==========================================
-// 2. GIAO DIỆN WEB CẤU HÌNH WIFI (AP MODE)
-// ==========================================
+// Giao diện Web
 const char SETUP_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -168,9 +163,8 @@ const char SETUP_HTML[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-// ==========================================
-// 3. GIAO DIỆN WEB GIÁM SÁT REALTIME
-// ==========================================
+// GIAO DIỆN WEB GIÁM SÁT REALTIME
+
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -449,9 +443,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-// ==========================================
-// 4. THUẬT TOÁN ĐO VÀ PHÂN LOẠI MÀU SẮC (HSV)
-// ==========================================
+// Đo và phân loại theo màu HSV
 void rgbToHsv(uint8_t r, uint8_t g, uint8_t b, float &h, float &s, float &v) {
   float r_f = r / 255.0f;
   float g_f = g / 255.0f;
@@ -572,9 +564,8 @@ void takeSnapshot() {
   else Serial1.println("COLOR:EMPTY");
 }
 
-// ==========================================
-// 5. REST API HANDLERS (WEB SERVER Link)
-// ==========================================
+// REST API HANDLERS (WEB SERVER Link)
+
 void urldecode(char *dst, const char *src) {
   char a, b;
   while (*src) {
@@ -730,9 +721,8 @@ esp_err_t led_handler(httpd_req_t *req) {
   return httpd_resp_send(req, "OK", 2);
 }
 
-// ==========================================
-// 6. SETUP HỆ THỐNG
-// ==========================================
+// Setup
+
 void setup() {
   setCpuFrequencyMhz(160); 
   Serial.begin(115200);
@@ -854,9 +844,8 @@ void setup() {
   }
 }
 
-// ==========================================
-// 7. VÒNG LẶP CHÍNH (LOOP)
-// ==========================================
+// LOOP
+
 void loop() {
   if (Serial1.available() > 0) {
     String req = Serial1.readStringUntil('\n');
