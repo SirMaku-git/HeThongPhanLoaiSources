@@ -124,7 +124,6 @@ WIFI:ERR:<ap>:<ip>
 ```
 REQ:WIFI
 ```
-
 ---
 
 ## Các Vật Liệu
