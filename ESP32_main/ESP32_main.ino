@@ -4,24 +4,23 @@
 #include <ESP32Servo.h>
 #include <L298N.h>
 
-// =================================================================================
-// 1. KHAI BÁO BIẾN TOÀN CỤC, CHÂN PHẦN CỨNG & TRẠNG THÁI
-// =================================================================================
+// khai báo biến
+
 LiquidCrystal_I2C lcd(0x27, 16, 2); 
 
 // --- CẤU HÌNH BIẾN TRỞ B10K (CHÂN GA TỔNG) ---
 const int POT_PIN = 34;          // Chân đọc biến trở B10K
 int lastStableValue = 0;        // Biến lưu nấc số ổn định cũ để khóa số
-const int NOISE_THRESHOLD = 15; // Ngưỡng chặn nhiễu nhấp nhô số
+const int CHAN_NHIEU = 15;    // Ngưỡng chặn nhiễu nhấp nhô số
 
-// --- CẤU HÌNH SERVO PHÂN LOẠI ---
+// --- điều chỉnh servo ---
 Servo servoSort;
 const int SERVO_PIN = 18; 
 const int ANGLE_HOME = 90;  
 const int ANGLE_RED  = 45;  
 const int ANGLE_BLUE = 135; 
 
-// --- CẤU HÌNH DRIVER MOTOR BĂNG CHUYỀN (L298N) ---
+// --- cấu hình motor drive L298N ---
 const int MOTOR_ENB_PIN = 14;
 const int MOTOR_IN3_PIN = 27;
 const int MOTOR_IN4_PIN = 26;
@@ -33,7 +32,7 @@ const int DELAY_RED_TRAVEL  = 1500;
 const int DELAY_BLUE_TRAVEL = 3000; 
 const int DELAY_SWEEP_HOLD  = 1000; 
 
-// --- Biến phục vụ quản lý thời gian Servo bằng MILLIS (Non-blocking) ---
+// --- Biến thời gian Servo bằng MILLIS ---
 enum ServoTaskState { SERVO_IDLE, SERVO_WAITING_TRAVEL, SERVO_HOLDING_SWEEP };
 ServoTaskState servoState = SERVO_IDLE;
 
@@ -56,12 +55,9 @@ const unsigned long requestInterval = 3000;
 bool hasWifiInfo = false; 
 bool errorBlinked = false; 
 
-// Biến trigger từ cảm biến IR (Nhận lệnh từ ESP32-CAM qua UART)
+// trigger từ cảm biến IR
 bool isObjectDetected = false; 
 
-// =================================================================================
-// 2. HÀM SETUP (KHỞI TẠO HỆ THỐNG)
-// =================================================================================
 void setup() {
   Serial.begin(115200);
   Serial2.begin(115200, SERIAL_8N1, 16, 17);
@@ -84,7 +80,7 @@ void setup() {
   servoSort.attach(SERVO_PIN, 500, 2400);
   servoSort.write(ANGLE_HOME);
   
-  Serial.println("\n>>> ESP32 CONTROLLER SẴN SÀNG HOẠT ĐỘNG VỚI B10K CHÂN GA!");
+  Serial.println("\n>>> ESP32 CONTROLLER ĐÃ MỞ");
 }
 
 // =================================================================================
@@ -97,7 +93,7 @@ void loop() {
   int currentValue = analogRead(POT_PIN);
   
   // Thuật toán Hysteresis chặn nhấp nhô số khi để yên tay
-  if (abs(currentValue - lastStableValue) > NOISE_THRESHOLD) {
+  if (abs(currentValue - lastStableValue) > CHAN_NHIEU) {
     lastStableValue = currentValue; 
   }
   
@@ -111,22 +107,16 @@ void loop() {
   float phanTramPOT = (float)processedValue / 4050.0;
   int baseSpeed = phanTramPOT * 188; 
 
-  // -------------------------------------------------------------------------------
-  // BƯỚC B: KIỂM TRA PHANH ECO TỪ CẢM BIẾN HỒNG NGOẠI (Giảm 1/2 công suất)
-  // -------------------------------------------------------------------------------
-  int finalSpeed = baseSpeed; // Mặc định tốc độ thực tế bằng tốc độ tay vặn
-  
+  // KIỂM TRA PHANH ECO TỪ CẢM BIẾN HỒNG NGOẠI
+  int finalSpeed = baseSpeed;
   if (isObjectDetected) {
-    finalSpeed = baseSpeed / 2; // Nếu IR phát hiện vật -> Ép giảm đi 1/2 công suất chân ga
+    finalSpeed = baseSpeed / 2; // giảm theo phép chia
   }
 
-  // Cấp tốc độ cuối cùng cho L298N và duy trì băng chuyền quay liên tục
   motor.setSpeed(finalSpeed);
   motor.backward(); 
 
-  // -------------------------------------------------------------------------------
-  // BƯỚC C: HIỆU ỨNG DẤU CHẤM CHẠY LCD (NON-BLOCKING)
-  // -------------------------------------------------------------------------------
+  // Chỉ là hiệu ứng thông báo :D
   if (currentWifiState == STATE_TRYING) {
     if (millis() - lastDotTime >= 500) { 
       lastDotTime = millis();
@@ -144,25 +134,24 @@ void loop() {
     }
   }
 
-  // Hỏi thăm trạng thái wifi của CAM nếu lệch pha khởi động
+  // checktrạng thái wifi của CAM nếu lệch pha khởi động
   if (!hasWifiInfo && (millis() - lastRequestTime >= requestInterval)) {
     lastRequestTime = millis();
     Serial2.println("REQ:WIFI");
   }
 
-  // -------------------------------------------------------------------------------
-  // BƯỚC D: ĐỌC DỮ LIỆU UART TỪ ESP32-CAM VÀ TRIGGER CÁC SỰ KIỆN
-  // -------------------------------------------------------------------------------
+  // ĐỌC DỮ LIỆU UART TỪ ESP32-CAM VÀ TRIGGER
+
   if (Serial2.available() > 0) {
     String dataCam = Serial2.readStringUntil('\n');
     dataCam.trim(); 
     
     if (dataCam.length() > 0) {
-      // Nhận lệnh từ Cảm biến hồng ngoại (IR) nối bên phía ESP32-CAM
+      // Nhận lệnh từ Cảm biến hồng ngoại nối bên phía ESP32-CAM
       if (dataCam.startsWith("IR:")) {
         String irStatus = dataCam.substring(3);
         if (irStatus == "TRIGGERED") {
-          isObjectDetected = true; // Kích hoạt cờ báo giảm nửa tốc độ băng chuyền
+          isObjectDetected = true; // cờ detect giảm nửa tốc độ băng chuyền
           lcd.setCursor(0, 1);
           lcd.print("IR: DETECTED    "); 
         }
@@ -262,9 +251,8 @@ void loop() {
     }
   }
 
-  // -------------------------------------------------------------------------------
-  // BƯỚC E: BỘ QUẢN LÝ TIẾN TRÌNH TIẾN LÙI SERVO KHÔNG DELAY (MILLIS STATE MACHINE)
-  // -------------------------------------------------------------------------------
+  // Xử lý SERVO
+
   switch (servoState) {
     case SERVO_WAITING_TRAVEL:
       if (millis() - servoActionStartTime >= currentTravelDelay) {
