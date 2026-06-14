@@ -63,7 +63,7 @@ void setup() {
   Serial2.begin(115200, SERIAL_8N1, 16, 17);
   
   // --- Khởi tạo màn hình LCD ---
-  Wire.begin(21, 22); 
+  Wire.begin(21, 22); // (SDA,SCL)
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0, 0); lcd.print("ESP32 started");
