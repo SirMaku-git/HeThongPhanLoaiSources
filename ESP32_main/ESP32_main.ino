@@ -58,16 +58,31 @@ bool errorBlinked = false;
 // trigger từ cảm biến IR
 bool isObjectDetected = false; 
 
+// --- Biến chẩn đoán lỗi kết nối phần cứng ---
+unsigned long lastCamMessageTime = 0; // Thời điểm cuối cùng nhận tin từ CAM
+bool isCamOnline = true;              // Trạng thái hoạt động của CAM
+bool isLcdConnected = false;          // Trạng thái hoạt động của LCD
+
 void setup() {
   Serial.begin(115200);
   Serial2.begin(115200, SERIAL_8N1, 16, 17);
   
-  // --- Khởi tạo màn hình LCD ---
+  // --- Khởi tạo và quét thử kết nối màn hình LCD ---
   Wire.begin(21, 22); // (SDA,SCL)
-  lcd.init();
-  lcd.backlight();
-  lcd.setCursor(0, 0); lcd.print("ESP32 started");
-  lcd.setCursor(0, 1); lcd.print("Wait ESP32-CAM..");
+  
+  Wire.beginTransmission(0x27);
+  byte lcdError = Wire.endTransmission();
+  if (lcdError == 0) {
+    isLcdConnected = true;
+    lcd.init();
+    lcd.backlight();
+    lcd.setCursor(0, 0); lcd.print("ESP32 started");
+    lcd.setCursor(0, 1); lcd.print("Wait ESP32-CAM..");
+    Serial.println(">>> [OK] LCD mo");
+  } else {
+    isLcdConnected = false;
+    Serial.println(">>> [LOI] LCD khong the ket noi!");
+  }
 
   // --- Driver L298N - Motor ---
   pinMode(MOTOR_ENB_PIN, OUTPUT);
@@ -80,34 +95,35 @@ void setup() {
   servoSort.attach(SERVO_PIN, 500, 2400);
   servoSort.write(ANGLE_HOME);
   
-  Serial.println("\n>>> ESP32 CONTROLLER ĐÃ MỞ");
+  lastCamMessageTime = millis();
+  Serial.println("\n>>> ESP32 CONTROLLER da mo");
 }
 
-// =================================================================================
-// 3. VÒNG LẶP CHÍNH (XỬ LÝ DỮ LIỆU UART & ĐIỀU KHIỂN CƠ KHÍ)
-// =================================================================================
 void loop() {
-  // -------------------------------------------------------------------------------
-  // BƯỚC A: ĐỌC VÀ KHÓA CỨNG SỐ BIẾN TRỞ B10K CHỐNG NHẢY SỐ (Xử lý Chân Ga)
-  // -------------------------------------------------------------------------------
   int currentValue = analogRead(POT_PIN);
   
-  // Thuật toán Hysteresis chặn nhấp nhô số khi để yên tay
+  // Kiểm tra chẩn đoán biến trở B10K
+  static unsigned long lastPotCheckTime = 0;
+  if (millis() - lastPotCheckTime > 5000) {
+    lastPotCheckTime = millis();
+    if (currentValue == 0 || currentValue >= 4095) {
+      Serial.printf(">>> [CANH BAO BIEN TRO] Gia tri B10K dang cham nguong cuc han (%d).\n", currentValue);
+    }
+  }
+
+  // Thuật toán Hysteresis
   if (abs(currentValue - lastStableValue) > CHAN_NHIEU) {
     lastStableValue = currentValue; 
   }
   
   int processedValue = lastStableValue;
   
-  // Ép vùng chết cơ khí (Min: 50, Max: 4050 dựa theo log thực tế của bạn)
   if (processedValue < 50)   processedValue = 0;
   if (processedValue > 4050) processedValue = 4050;
   
-  // Tính tốc độ gốc (Mức PWM Max an toàn cho Motor của bạn là 188)
   float phanTramPOT = (float)processedValue / 4050.0;
-  int baseSpeed = phanTramPOT * 188; 
+  int baseSpeed = phanTramPOT * 255; 
 
-  // KIỂM TRA PHANH ECO TỪ CẢM BIẾN HỒNG NGOẠI
   int finalSpeed = baseSpeed;
   if (isObjectDetected) {
     finalSpeed = baseSpeed / 2; // giảm theo phép chia
@@ -117,7 +133,7 @@ void loop() {
   motor.backward(); 
 
   // Chỉ là hiệu ứng thông báo :D
-  if (currentWifiState == STATE_TRYING) {
+  if (currentWifiState == STATE_TRYING && isLcdConnected) {
     if (millis() - lastDotTime >= 500) { 
       lastDotTime = millis();
       dotCount = (dotCount + 1) % 4; 
@@ -134,7 +150,7 @@ void loop() {
     }
   }
 
-  // checktrạng thái wifi của CAM nếu lệch pha khởi động
+  // check trạng thái wifi của CAM nếu lệch pha khởi động
   if (!hasWifiInfo && (millis() - lastRequestTime >= requestInterval)) {
     lastRequestTime = millis();
     Serial2.println("REQ:WIFI");
@@ -147,13 +163,17 @@ void loop() {
     dataCam.trim(); 
     
     if (dataCam.length() > 0) {
+      lastCamMessageTime = millis(); // Cập nhật mốc thời gian nhận tin nhắn gần nhất từ CAM
+      
       // Nhận lệnh từ Cảm biến hồng ngoại nối bên phía ESP32-CAM
       if (dataCam.startsWith("IR:")) {
         String irStatus = dataCam.substring(3);
         if (irStatus == "TRIGGERED") {
           isObjectDetected = true; // cờ detect giảm nửa tốc độ băng chuyền
-          lcd.setCursor(0, 1);
-          lcd.print("IR: DETECTED    "); 
+          if (isLcdConnected) {
+            lcd.setCursor(0, 1);
+            lcd.print("IR: DETECTED    "); 
+          }
         }
       }
 
@@ -164,26 +184,28 @@ void loop() {
         if (colorValue != lastColor) {
           lastColor = colorValue; 
 
-          lcd.clear();
-          lcd.setCursor(0, 0); lcd.print("Detect:");
-          lcd.setCursor(0, 1);
+          if (isLcdConnected) {
+            lcd.clear();
+            lcd.setCursor(0, 0); lcd.print("Detect:");
+            lcd.setCursor(0, 1);
+          }
 
           if (colorValue == "RED") {
-            lcd.print("RED");
+            if (isLcdConnected) lcd.print("RED");
             targetAngle = ANGLE_RED;
             currentTravelDelay = DELAY_RED_TRAVEL;
             servoActionStartTime = millis();
             servoState = SERVO_WAITING_TRAVEL; 
           } 
           else if (colorValue == "BLUE") {
-            lcd.print("BLUE");
+            if (isLcdConnected) lcd.print("BLUE");
             targetAngle = ANGLE_BLUE;
             currentTravelDelay = DELAY_BLUE_TRAVEL;
             servoActionStartTime = millis();
             servoState = SERVO_WAITING_TRAVEL; 
           }
           else if (colorValue == "EMPTY") {
-            lcd.print("EMPTY");
+            if (isLcdConnected) lcd.print("EMPTY");
             isObjectDetected = false; // Băng chuyền trống -> Trả lại quyền quyết định 100% cho B10K
             servoSort.write(ANGLE_HOME);
             servoState = SERVO_IDLE;
@@ -194,16 +216,18 @@ void loop() {
       // (Giữ nguyên các khối xử lý WIFI:TRY, WIFI:IP, WIFI:ERR để hiển thị LCD như cũ của bạn...)
       else if (dataCam.startsWith("WIFI:TRY:")) {
         String newSsid = dataCam.substring(9); 
-        if (currentSsid != "" && newSsid != currentSsid) {
+        if (currentSsid != "" && newSsid != currentSsid && isLcdConnected) {
           lcd.clear();
           lcd.setCursor(0, 0); lcd.print("Connect Failed!");
           lcd.setCursor(0, 1); lcd.print(currentSsid);
           delay(2000); 
         }
         currentSsid = newSsid;
-        lcd.clear();
-        lcd.setCursor(0, 0); lcd.print("Connecting");
-        lcd.setCursor(0, 1); lcd.print(currentSsid);
+        if (isLcdConnected) {
+          lcd.clear();
+          lcd.setCursor(0, 0); lcd.print("Connecting");
+          lcd.setCursor(0, 1); lcd.print(currentSsid);
+        }
         currentWifiState = STATE_TRYING;
         lastDotTime = millis();
         dotCount = 0;
@@ -219,9 +243,11 @@ void loop() {
           ssidName = ipContent.substring(0, colonIdx);    
           ipAddress = ipContent.substring(colonIdx + 1); 
         }
-        lcd.clear();
-        lcd.setCursor(0, 0); lcd.print(ssidName);  
-        lcd.setCursor(0, 1); lcd.print(ipAddress); 
+        if (isLcdConnected) {
+          lcd.clear();
+          lcd.setCursor(0, 0); lcd.print(ssidName);  
+          lcd.setCursor(0, 1); lcd.print(ipAddress); 
+        }
         currentWifiState = STATE_CONNECTED;
         hasWifiInfo = true;
         errorBlinked = false;
@@ -235,20 +261,37 @@ void loop() {
           apSsid = errContent.substring(0, colonIdx);
           apIp = errContent.substring(colonIdx + 1);
         }
-        if (!errorBlinked) {
+        if (!errorBlinked && isLcdConnected) {
           lcd.clear();
           lcd.setCursor(0, 0); lcd.print("All Failed!");
           lcd.setCursor(0, 1); lcd.print("Switching to AP");
           delay(2500); 
           errorBlinked = true;
         }
-        lcd.clear();
-        lcd.setCursor(0, 0); lcd.print(apSsid);
-        lcd.setCursor(0, 1); lcd.print(apIp);
+        if (isLcdConnected) {
+          lcd.clear();
+          lcd.setCursor(0, 0); lcd.print(apSsid);
+          lcd.setCursor(0, 1); lcd.print(apIp);
+        }
         currentWifiState = STATE_AP_MODE;
         hasWifiInfo = true; 
       }
     }
+  }
+
+  // --- KIỂM TRA MẤT KẾT NỐI UART VỚI ESP32-CAM ---
+  if (millis() - lastCamMessageTime > 15000) { // 15 giây không có dữ liệu từ ESP32-CAM
+    if (isCamOnline) {
+      isCamOnline = false;
+      Serial.println(">>> [LOI] Mat tin hieu ket noi UART voi ESP32-CAM!");
+      if (isLcdConnected) {
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("CAM OFFLINE!");
+        lcd.setCursor(0, 1); lcd.print("Check RX2/TX2...");
+      }
+    }
+  } else {
+    isCamOnline = true;
   }
 
   // Xử lý SERVO
