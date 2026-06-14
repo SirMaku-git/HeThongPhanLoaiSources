@@ -262,6 +262,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             color: #00ff66;
             font-size: 18px;
             font-weight: bold;
+            transition: 0.2s;
         }
         .btn-capture {
             padding: 12px;
@@ -538,17 +539,46 @@ void processColorLogic(camera_fb_t* fb) {
   }
 }
 
+// CÁC HÀM ĐIỀU KHIỂN NGUỒN CAMERA
+void suspendCamera() {
+  sensor_t *s = esp_camera_sensor_get();
+  if (s && s->set_reg) {
+    s->set_reg(s, 0x3008, 0xFF, 0x40); 
+  }
+}
+
+void resumeCamera() {
+  sensor_t *s = esp_camera_sensor_get();
+  if (s && s->set_reg) {
+    s->set_reg(s, 0x3008, 0xFF, 0x02); 
+  }
+}
+
 void takeSnapshot() {
   if (isConfigMode) return; 
+
+  resumeCamera();
+  delay(150);
+  for (int i = 0; i < 2; i++) {
+    camera_fb_t *dummy_fb = esp_camera_fb_get();
+    if (dummy_fb) {
+      esp_camera_fb_return(dummy_fb); // Giải phóng
+    }
+    delay(20);
+  }
+
+  // Lấy khung hình số 3
   camera_fb_t * fb = esp_camera_fb_get(); 
-  if (!fb) return;
+  if (!fb) {
+    suspendCamera();
+    return;
+  }
 
   processColorLogic(fb); 
 
   if (xSemaphoreTake(frame_mutex, portMAX_DELAY) == pdTRUE) {
     uint8_t *out_jpg = NULL;
     size_t out_jpg_len = 0;
-    // Giữ chất lượng nén ảnh ở mức 80 để chống vỡ hạt nhòe nhoẹt
     if (fmt2jpg(fb->buf, fb->len, fb->width, fb->height, fb->format, 80, &out_jpg, &out_jpg_len)) {
       memcpy(shared_buf, out_jpg, out_jpg_len);
       shared_len = out_jpg_len;
@@ -558,6 +588,8 @@ void takeSnapshot() {
   }
   esp_camera_fb_return(fb); 
   current_frame++;
+
+  suspendCamera();
 
   if (current_label == "VẬT ĐỎ") Serial1.println("COLOR:RED");
   else if (current_label == "VẬT XANH DƯƠNG") Serial1.println("COLOR:BLUE");
@@ -754,7 +786,7 @@ void setup() {
     Serial.println(">>> [LOI] Khong the khoi tao Camera!");
     return;
   }
-  Serial.println(">>> Camera OK! Dang can bang trang (15 frames)...");
+  Serial.println(">>> Camera OK!...");
   delay(1000); 
 
   sensor_t *s = esp_camera_sensor_get();
@@ -768,6 +800,8 @@ void setup() {
     if (fb) esp_camera_fb_return(fb);
     delay(50);
   }
+
+  suspendCamera();
 
   prefs.begin("wifi", false);
   int wifi_count = prefs.getInt("c", 0);
