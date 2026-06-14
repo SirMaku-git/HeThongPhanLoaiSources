@@ -163,8 +163,7 @@ const char SETUP_HTML[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-// GIAO DIỆN WEB GIÁM SÁT REALTIME
-
+// GIAO DIỆN WEB GIÁM SÁT REALTIME VÀ ĐIỀU KHIỂN CAMERA
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
