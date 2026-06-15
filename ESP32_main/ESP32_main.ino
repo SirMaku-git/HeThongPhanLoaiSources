@@ -16,9 +16,8 @@ const int CHAN_NHIEU = 15;    // Ngưỡng chặn nhiễu nhấp nhô số
 // --- điều chỉnh servo ---
 Servo servoSort;
 const int SERVO_PIN = 18; 
-const int ANGLE_HOME = 90;  
-const int ANGLE_RED  = 45;  
-const int ANGLE_BLUE = 135; 
+const int ANGLE_HOME = 60;
+const int ANGLE_BLUE = 120; 
 
 // --- cấu hình motor drive L298N ---
 const int MOTOR_ENB_PIN = 14;
@@ -101,15 +100,6 @@ void setup() {
 
 void loop() {
   int currentValue = analogRead(POT_PIN);
-  
-  // Kiểm tra chẩn đoán biến trở B10K
-  static unsigned long lastPotCheckTime = 0;
-  if (millis() - lastPotCheckTime > 5000) {
-    lastPotCheckTime = millis();
-    if (currentValue == 0 || currentValue >= 4095) {
-      Serial.printf(">>> [CANH BAO BIEN TRO] Gia tri B10K dang cham nguong cuc han (%d).\n", currentValue);
-    }
-  }
 
   // Thuật toán Hysteresis
   if (abs(currentValue - lastStableValue) > CHAN_NHIEU) {
@@ -165,8 +155,22 @@ void loop() {
     if (dataCam.length() > 0) {
       lastCamMessageTime = millis(); // Cập nhật mốc thời gian nhận tin nhắn gần nhất từ CAM
       
+      // Nhận lệnh lỗi khởi động phần cứng của Camera
+      if (dataCam.startsWith("CAM_ERR:")) {
+        String errType = dataCam.substring(8);
+        if (errType == "INIT_FAIL") {
+          Serial.println(">>> [LOI CHI MANG] ESP32-CAM bao loi: Khoi dong CAM that bai!");
+          if (isLcdConnected) {
+            lcd.clear();
+            lcd.setCursor(0, 0); lcd.print("CAM INIT FAIL!");
+            lcd.setCursor(0, 1); lcd.print("Check Cam Ribbon");
+          }
+          hasWifiInfo = true; // Chặn việc spam REQ:WIFI liên tục khi camera hỏng
+        }
+      }
+
       // Nhận lệnh từ Cảm biến hồng ngoại nối bên phía ESP32-CAM
-      if (dataCam.startsWith("IR:")) {
+      else if (dataCam.startsWith("IR:")) {
         String irStatus = dataCam.substring(3);
         if (irStatus == "TRIGGERED") {
           isObjectDetected = true; // cờ detect giảm nửa tốc độ băng chuyền
@@ -192,7 +196,7 @@ void loop() {
 
           if (colorValue == "RED") {
             if (isLcdConnected) lcd.print("RED");
-            targetAngle = ANGLE_RED;
+            targetAngle = ANGLE_HOME;
             currentTravelDelay = DELAY_RED_TRAVEL;
             servoActionStartTime = millis();
             servoState = SERVO_WAITING_TRAVEL; 
@@ -216,17 +220,32 @@ void loop() {
       // (Giữ nguyên các khối xử lý WIFI:TRY, WIFI:IP, WIFI:ERR để hiển thị LCD như cũ của bạn...)
       else if (dataCam.startsWith("WIFI:TRY:")) {
         String newSsid = dataCam.substring(9); 
-        if (currentSsid != "" && newSsid != currentSsid && isLcdConnected) {
+        
+        // In trạng thái kết nối WiFi ra Serial Monitor cổng COM của máy tính
+        Serial.println(">>> [WIFI] Dang thu ket noi mang: " + newSsid);
+        
+        // Chỉ so sánh Connect Failed khi cả hai SSID cũ và mới đều là tên WiFi thực tế (bỏ qua trạng thái Reconnecting/Connecting)
+        bool isPrevRealSsid = (currentSsid != "" && currentSsid != "Reconnecting..." && currentSsid != "Connecting...");
+        bool isNewRealSsid = (newSsid != "" && newSsid != "Reconnecting..." && newSsid != "Connecting...");
+        
+        if (isPrevRealSsid && isNewRealSsid && newSsid != currentSsid && isLcdConnected) {
           lcd.clear();
           lcd.setCursor(0, 0); lcd.print("Connect Failed!");
           lcd.setCursor(0, 1); lcd.print(currentSsid);
           delay(2000); 
         }
+        
         currentSsid = newSsid;
         if (isLcdConnected) {
           lcd.clear();
-          lcd.setCursor(0, 0); lcd.print("Connecting");
-          lcd.setCursor(0, 1); lcd.print(currentSsid);
+          lcd.setCursor(0, 0); 
+          if (newSsid == "Reconnecting...") {
+            lcd.print("Reconnecting");
+          } else {
+            lcd.print("Connecting");
+          }
+          lcd.setCursor(0, 1); 
+          lcd.print(currentSsid);
         }
         currentWifiState = STATE_TRYING;
         lastDotTime = millis();
@@ -243,6 +262,10 @@ void loop() {
           ssidName = ipContent.substring(0, colonIdx);    
           ipAddress = ipContent.substring(colonIdx + 1); 
         }
+        
+        // In trạng thái kết nối thành công kèm IP ra Serial Monitor máy tính
+        Serial.println(">>> [WIFI] Da ket noi thanh cong! SSID: " + ssidName + " - IP: " + ipAddress);
+        
         if (isLcdConnected) {
           lcd.clear();
           lcd.setCursor(0, 0); lcd.print(ssidName);  
@@ -261,6 +284,10 @@ void loop() {
           apSsid = errContent.substring(0, colonIdx);
           apIp = errContent.substring(colonIdx + 1);
         }
+        
+        // In lỗi kết nối và trạng thái AP cứu hộ ra Serial Monitor máy tính
+        Serial.println(">>> [WIFI] LOI KET NOI! Tu dong phat AP: " + apSsid + " - IP: " + apIp);
+        
         if (!errorBlinked && isLcdConnected) {
           lcd.clear();
           lcd.setCursor(0, 0); lcd.print("All Failed!");
