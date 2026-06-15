@@ -11,6 +11,7 @@ httpd_handle_t camera_httpd = NULL;
 Preferences prefs;
 
 bool isConfigMode = false;
+bool camera_ok = false; 
 #define IR_SENSOR_PIN 13 
 
 uint8_t *shared_buf = NULL;
@@ -23,7 +24,6 @@ volatile uint8_t bg_r = 120, bg_g = 150, bg_b = 115;
 volatile bool calibrated = false;
 volatile int roi_x = 130, roi_y = 90;
 volatile float current_sharpness = 0.0;
-volatile int current_led_val = 0;
 volatile uint32_t current_frame = 0; 
 
 String current_label = "TRỐNG";
@@ -213,7 +213,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             width: 320px;
             height: 240px;
             display: block;
-            cursor: crosshair;
         }
         .roi-box {
             position: absolute;
@@ -308,8 +307,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <p id="calib_info" style="font-size: 12px; color: #888;">Đang sử dụng màu nền mặc định.</p>
             
             <hr style="border-color: #333; margin: 20px 0;">
-            <p>Điều Chỉnh Đèn Rọi:</p>
-            <input type="range" id="led_slider" min="0" max="255" value="0" style="width: 100%; cursor: pointer;">
             
             <button id="wifi_list_btn" class="btn-small">XEM DANH SÁCH WIFI TRONG BỘ NHỚ</button>
             <div id="wifi_list_view" style="font-size: 12px; color:#00ff66; text-align:left; line-height: 1.5;"></div>
@@ -323,7 +320,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             </div>
             <p id="sharp_text" style="color: #aaa; font-size: 14px; margin-top: 15px;">Độ sắc nét: 0.0</p>
             <p id="frame_counter" style="color: #00ff66; font-size: 12px;">Tổng số khung hình: 0</p>
-            <p style="font-size: 11px; color:#555;">* Click chuột lên vị trí bất kỳ trên ảnh để dời ô quét màu (ROI)</p>
         </div>
 
         <div class="card">
@@ -340,19 +336,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         const img = document.getElementById('stream_img');
         const roi = document.getElementById('roi_element');
         let local_frame_count = -1;
-
-        document.getElementById('img_container').onclick = (e) => {
-            const rect = img.getBoundingClientRect();
-            let x = Math.round((e.clientX - rect.left) / rect.width * 320 - 30);
-            let y = Math.round((e.clientY - rect.top) / rect.height * 240 - 30);
-            
-            x = Math.max(0, Math.min(x, 260));
-            y = Math.max(0, Math.min(y, 180));
-            
-            roi.style.left = x + 'px';
-            roi.style.top = y + 'px';
-            fetch(`/set_roi?x=${x}&y=${y}`);
-        };
 
         async function updateData() {
             try {
@@ -397,10 +380,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         document.getElementById('calib_btn').onclick = () => {
             fetch('/calibrate');
             document.getElementById('calib_info').innerText = "Đã lưu màu nền băng chuyền hiện tại!";
-        };
-        
-        document.getElementById('led_slider').oninput = function() {
-            fetch(`/led?val=${this.value}`);
         };
         
         document.getElementById('wifi_list_btn').onclick = () => {
@@ -554,16 +533,33 @@ void resumeCamera() {
 }
 
 void takeSnapshot() {
+  if (!camera_ok) {
+    Serial1.println("COLOR:EMPTY");
+    return;
+  }
   if (isConfigMode) return; 
 
   resumeCamera();
   delay(150);
-  for (int i = 0; i < 2; i++) {
+
+  sensor_t *s = esp_camera_sensor_get();
+  if (s) {
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+    s->set_exposure_ctrl(s, 1);
+    s->set_gain_ctrl(s, 1);
+    s->set_saturation(s, 1);
+    s->set_brightness(s, -2);
+    s->set_contrast(s, 2);
+    s->set_ae_level(s, -1);
+  }
+
+  for (int i = 0; i < 5; i++) {
     camera_fb_t *dummy_fb = esp_camera_fb_get();
     if (dummy_fb) {
       esp_camera_fb_return(dummy_fb); // Giải phóng
     }
-    delay(20);
+    delay(30);
   }
 
   // Lấy khung hình số 3
@@ -732,26 +728,6 @@ esp_err_t calibrate_handler(httpd_req_t *req) {
   return httpd_resp_send(req, "OK", 2); 
 }
 
-esp_err_t set_roi_handler(httpd_req_t *req) {
-  char q[64], x_s[10], y_s[10];
-  if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
-    if (httpd_query_key_value(q, "x", x_s, sizeof(x_s)) == ESP_OK) roi_x = constrain(atoi(x_s), 0, 260);
-    if (httpd_query_key_value(q, "y", y_s, sizeof(y_s)) == ESP_OK) roi_y = constrain(atoi(y_s), 0, 180);
-  }
-  return httpd_resp_send(req, "OK", 2);
-}
-
-esp_err_t led_handler(httpd_req_t *req) {
-  char q[64], val_s[10];
-  if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
-    if (httpd_query_key_value(q, "val", val_s, sizeof(val_s)) == ESP_OK) { 
-      current_led_val = constrain(atoi(val_s), 0, 255); 
-      analogWrite(4, current_led_val); 
-    }
-  }
-  return httpd_resp_send(req, "OK", 2);
-}
-
 // Setup
 
 void setup() {
@@ -762,7 +738,6 @@ void setup() {
   Serial1.begin(115200, SERIAL_8N1, 14, 15);
 
   pinMode(IR_SENSOR_PIN, INPUT_PULLUP); 
-  pinMode(4, OUTPUT); analogWrite(4, 0);   
   pinMode(33, OUTPUT); digitalWrite(33, HIGH); 
 
   frame_mutex = xSemaphoreCreateMutex(); 
@@ -783,24 +758,26 @@ void setup() {
 
   if (esp_camera_init(&config) != ESP_OK) {
     Serial.println(">>> [LOI] Khong the khoi tao Camera!");
-    return;
-  }
-  Serial.println(">>> Camera OK!...");
-  delay(1000); 
+    current_label = "LỖI CAMERA";
+  } else {
+    camera_ok = true;
+    Serial.println(">>> Camera OK!...");
+    delay(1000); 
 
-  sensor_t *s = esp_camera_sensor_get();
-  if (s) {
-    s->set_whitebal(s, 1); s->set_awb_gain(s, 1); s->set_exposure_ctrl(s, 1);
-    s->set_gain_ctrl(s, 1); s->set_saturation(s, 1); s->set_hmirror(s, 1); s->set_vflip(s, 1);
-  }
+    sensor_t *s = esp_camera_sensor_get();
+    if (s) {
+      s->set_whitebal(s, 1); s->set_awb_gain(s, 1); s->set_exposure_ctrl(s, 1);
+      s->set_gain_ctrl(s, 1); s->set_saturation(s, 1); s->set_hmirror(s, 1); s->set_vflip(s, 1);
+    }
 
-  for (int i = 0; i < 15; i++) {
-    camera_fb_t * fb = esp_camera_fb_get();
-    if (fb) esp_camera_fb_return(fb);
-    delay(50);
-  }
+    for (int i = 0; i < 15; i++) {
+      camera_fb_t * fb = esp_camera_fb_get();
+      if (fb) esp_camera_fb_return(fb);
+      delay(50);
+    }
 
-  suspendCamera();
+    suspendCamera();
+  }
 
   prefs.begin("wifi", false);
   int wifi_count = prefs.getInt("c", 0);
@@ -869,9 +846,6 @@ void setup() {
       httpd_register_uri_handler(camera_httpd, new httpd_uri_t{ "/capture", HTTP_GET, capture_handler, NULL });
       httpd_register_uri_handler(camera_httpd, new httpd_uri_t{ "/jpg", HTTP_GET, jpg_handler, NULL });
       httpd_register_uri_handler(camera_httpd, new httpd_uri_t{ "/color", HTTP_GET, color_handler, NULL });
-      httpd_register_uri_handler(camera_httpd, new httpd_uri_t{ "/led", HTTP_GET, led_handler, NULL });
-      httpd_register_uri_handler(camera_httpd, new httpd_uri_t{ "/calibrate", HTTP_GET, calibrate_handler, NULL });
-      httpd_register_uri_handler(camera_httpd, new httpd_uri_t{ "/set_roi", HTTP_GET, set_roi_handler, NULL });
     }
     Serial.println(">>> Server da chay!");
   }
