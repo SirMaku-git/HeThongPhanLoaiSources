@@ -22,7 +22,7 @@ volatile uint8_t current_r = 0, current_g = 0, current_b = 0;
 volatile float current_h = 0.0, current_s = 0.0, current_v = 0.0;
 volatile uint8_t bg_r = 120, bg_g = 150, bg_b = 115;
 volatile bool calibrated = false;
-volatile int roi_x = 130, roi_y = 90;
+volatile int roi_x = 90, roi_y = 50; 
 volatile float current_sharpness = 0.0;
 volatile uint32_t current_frame = 0; 
 
@@ -38,7 +38,7 @@ const char SETUP_HTML[] PROGMEM = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cài Đặt WiFi - ESP32-CAM</title>
+    <title>Cài Đặt WiFi - esp32 Cam</title>
     <style>
         body {
             background-color: #121212;
@@ -170,7 +170,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32-CAM Phân Loại Màu Tự Động</title>
+    <title>esp32 Cam Phân Loại Màu Tự Động</title>
     <style>
         body {
             background-color: #121212;
@@ -216,13 +216,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         }
         .roi-box {
             position: absolute;
-            width: 60px;
-            height: 60px;
+            width: 140px;
+            height: 140px;
             border: 2px solid #00ff66;
             box-sizing: border-box;
             pointer-events: none;
-            left: 130px;
-            top: 90px;
+            left: 90px;
+            top: 50px;
         }
         .color-preview {
             font-size: 24px;
@@ -464,8 +464,9 @@ void processColorLogic(camera_fb_t* fb) {
   long sharp = 0;
   uint16_t prev_px = 0;
 
-  for (int y = roi_y; y < roi_y + 60; y++) {
-    for (int x = roi_x; x < roi_x + 60; x++) {
+  // Quét vùng ROI kích thước 140x140 pixel
+  for (int y = roi_y; y < roi_y + 140; y++) {
+    for (int x = roi_x; x < roi_x + 140; x++) {
       int idx = (y * 320 + x) * 2;
       uint16_t px = (fb->buf[idx] << 8) | fb->buf[idx + 1];
       
@@ -487,10 +488,11 @@ void processColorLogic(camera_fb_t* fb) {
     }
   }
 
-  current_r = sumR / 3600; 
-  current_g = sumG / 3600; 
-  current_b = sumB / 3600;
-  current_sharpness = (float)sharp / 3600;
+  // Chia trung bình cho 19600 (140x140) pixel
+  current_r = sumR / 19600; 
+  current_g = sumG / 19600; 
+  current_b = sumB / 19600;
+  current_sharpness = (float)sharp / 19600;
   
   float t_h = 0, t_s = 0, t_v = 0;
   rgbToHsv(current_r, current_g, current_b, t_h, t_s, t_v);
@@ -502,11 +504,13 @@ void processColorLogic(camera_fb_t* fb) {
   
   if (bg_diff < 40) {
     current_label = "TRỐNG"; 
-  } else if (current_v > 25.0f && current_s > 35.0f) {
-    if (current_h < 25.0f || current_h > 330.0f) {
+  } else if (current_v > 15.0f) { // Giảm ngưỡng V xuống 15.0f để tối ưu chụp lóa sáng
+    // Nhận diện Đỏ (giữ nguyên độ bão hòa S > 25.0f để chống nhiễu)
+    if (current_s > 25.0f && (current_h < 45.0f || current_h > 315.0f)) {
       current_label = "VẬT ĐỎ";
     } 
-    else if (current_h >= 170.0f && current_h <= 260.0f) {
+    // Nhận diện Xanh Dương (Nới rộng dải S xuống > 20.0f để bắt dải xanh lam lạt/lóa mà bồ cung cấp)
+    else if (current_s > 20.0f && (current_h >= 150.0f && current_h <= 275.0f)) {
       current_label = "VẬT XANH DƯƠNG";
     } 
     else {
@@ -557,12 +561,11 @@ void takeSnapshot() {
   for (int i = 0; i < 5; i++) {
     camera_fb_t *dummy_fb = esp_camera_fb_get();
     if (dummy_fb) {
-      esp_camera_fb_return(dummy_fb); // Giải phóng
+      esp_camera_fb_return(dummy_fb);
     }
     delay(30);
   }
 
-  // Lấy khung hình số 3
   camera_fb_t * fb = esp_camera_fb_get(); 
   if (!fb) {
     suspendCamera();
@@ -592,7 +595,6 @@ void takeSnapshot() {
 }
 
 // REST API HANDLERS (WEB SERVER Link)
-
 void urldecode(char *dst, const char *src) {
   char a, b;
   while (*src) {
@@ -716,6 +718,11 @@ esp_err_t jpg_handler(httpd_req_t *req) {
 }
 
 esp_err_t color_handler(httpd_req_t *req) {
+  // Đồng bộ truyền UART sang ESP32 main mỗi khi trình duyệt Web gửi yêu cầu lấy màu sắc
+  if (current_label == "VẬT ĐỎ") Serial1.println("COLOR:RED");
+  else if (current_label == "VẬT XANH DƯƠNG") Serial1.println("COLOR:BLUE");
+  else Serial1.println("COLOR:EMPTY");
+
   char json[300];
   snprintf(json, sizeof(json), "{\"r\":%d,\"g\":%d,\"b\":%d,\"h\":%.1f,\"s\":%.1f,\"v\":%.1f,\"label\":\"%s\",\"sharp\":%.1f,\"roi_x\":%d,\"roi_y\":%d,\"frame\":%u}", 
     current_r, current_g, current_b, current_h, current_s, current_v, current_label.c_str(), current_sharpness, roi_x, roi_y, current_frame);
@@ -731,9 +738,9 @@ esp_err_t calibrate_handler(httpd_req_t *req) {
 // Setup
 
 void setup() {
-  setCpuFrequencyMhz(160); 
+  setCpuFrequencyMhz(80); 
   Serial.begin(115200);
-  Serial.println("\n>>> KHOI DONG HE THONG ESP32-CAM...");
+  Serial.println("\n>>> KHOI DONG HE THONG esp32 Cam...");
 
   Serial1.begin(115200, SERIAL_8N1, 14, 15);
 
@@ -785,6 +792,7 @@ void setup() {
 
   if (wifi_count > 0) {
     WiFi.mode(WIFI_STA);
+    
     for (int i = 0; i < wifi_count; i++) {
       String saved_s = prefs.getString(("s"+String(i)).c_str(), "");
       String saved_p = prefs.getString(("p"+String(i)).c_str(), "");
@@ -798,6 +806,7 @@ void setup() {
       delay(100);
       
       WiFi.begin(saved_s.c_str(), saved_p.c_str());
+      WiFi.setTxPower(WIFI_POWER_13dBm);
       
       for (int j = 0; j < 10; j++) { 
         if (WiFi.status() == WL_CONNECTED) { wifi_connected = true; break; }
@@ -818,6 +827,7 @@ void setup() {
     
     WiFi.mode(WIFI_AP);
     WiFi.softAP("ESP32-CAM-SETUP"); 
+    WiFi.setTxPower(WIFI_POWER_17dBm);
     isConfigMode = true; 
     Serial.print(">>> Ket noi WiFi 'ESP32-CAM-SETUP' -> vao web: http://");
     Serial.println(WiFi.softAPIP());
@@ -828,7 +838,6 @@ void setup() {
     Serial.println(WiFi.localIP());
 
     Serial1.println("WIFI:IP:" + WiFi.SSID() + ":" + WiFi.localIP().toString());
-    takeSnapshot(); 
   }
 
   httpd_config_t conf = HTTPD_DEFAULT_CONFIG(); 
@@ -873,6 +882,15 @@ void loop() {
   static unsigned long last_w = 0;
   static bool last_ir_state = HIGH;
   static unsigned long last_trigger_time = 0;
+  static unsigned long last_heartbeat = 0; 
+
+  // Phát tín hiệu nhịp tim định kỳ mỗi 4 giây sang ESP32 main để thông báo trạng thái hoạt động
+  if (millis() - last_heartbeat >= 4000) {
+    last_heartbeat = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial1.println("PING");
+    }
+  }
 
   bool current_ir_state = digitalRead(IR_SENSOR_PIN);
   
