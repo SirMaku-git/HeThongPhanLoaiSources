@@ -130,12 +130,24 @@ REQ:WIFI
 
 | Nhóm | Thành phần |
 | --- | --- |
-| Điều khiển | Mạch ESP32-CAM AI-Thinker; Mạch ESP32 NodeMCU (Bản 30 chân); Mạch nạp USB-to-UART FTDI (FT232RL) |
+| Điều khiển | Mạch ESP32-CAM AI-Thinker; Mạch ESP32 NodeMCU (bản thường 30 chân); Mạch nạp USB-to-UART FTDI (FT232RL) |
 | Cảm biến | Cảm biến ảnh OV5640 AF (Auto Focus); Cảm biến hồng ngoại tránh vật cản (IR) |
 | Chấp hành | Mạch cầu H L298N Dual Motor Driver; Động cơ DC giảm tốc (5V - 12V); Động cơ Servo MG90S (hoặc SG90) |
 | Hiển thị & Chiếu sáng | Màn hình LCD 1602 kèm mạch chuyển đổi I2C; Đèn Flash LED dán sẵn trên ESP32-CAM |
 | Nguồn & Kết nối | Nguồn Adapter 12V (Dòng từ 2A trở lên); Dây cắm Dupont (Đực-Cái, Đực-Đực, Cái-Cái); Cáp USB Micro |
 | Cơ khí & Điều chỉnh | Khung băng tải cơ khí; Biến trở xoay đơn B10K |
+
+### Ghi Chú Phần Cứng / Nguồn Cấp
+
+- Hệ thống hiện đang dùng 2 nguồn cấp riêng:
+  - 1 đường 5V cấp vào ESP32 main bản 30 chân.
+  - 1 đường lấy từ nguồn 12V-1A, cấp vào nhánh ESP32-CAM và đồng thời dùng cho L298N.
+- Các phần cứng chính đang dùng trong mô hình:
+  - ESP32 main bản thường 30 chân.
+  - ESP32-CAM.
+  - B10K biến trở để tinh chỉnh/tham chiếu theo mạch.
+  - L298N để điều khiển động cơ băng chuyền.
+  - Servo MG90S để gạt/phân loại vật thể.
 ---
 
 ## Người Phát Triển
