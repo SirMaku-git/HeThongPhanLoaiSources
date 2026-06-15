@@ -5,19 +5,19 @@
 #include <L298N.h>
 
 // khai báo biến
-
 LiquidCrystal_I2C lcd(0x27, 16, 2); 
 
-// --- CẤU HÌNH BIẾN TRỞ B10K (CHÂN GA TỔNG) ---
-const int POT_PIN = 34;          // Chân đọc biến trở B10K
+// --- B10K ---
+const int POT_PIN = 34;          // Chân B10K
 int lastStableValue = 0;        // Biến lưu nấc số ổn định cũ để khóa số
-const int CHAN_NHIEU = 15;    // Ngưỡng chặn nhiễu nhấp nhô số
+const int CHAN_NHIEU = 15;    // Ngưỡng chặn nhiễu số
 
 // --- điều chỉnh servo ---
 Servo servoSort;
 const int SERVO_PIN = 18; 
-const int ANGLE_HOME = 60;
-const int ANGLE_BLUE = 120; 
+const int ANGLE_HOME = 60;   // Góc nghỉ trung gian mới
+const int ANGLE_RED  = 10;   // Góc gạt riêng biệt cho vật đỏ
+const int ANGLE_BLUE = 130; 
 
 // --- cấu hình motor drive L298N ---
 const int MOTOR_ENB_PIN = 14;
@@ -26,10 +26,10 @@ const int MOTOR_IN4_PIN = 26;
 
 L298N motor(MOTOR_ENB_PIN, MOTOR_IN3_PIN, MOTOR_IN4_PIN);
 
-// --- Cấu hình thời gian trễ dịch chuyển của băng chuyền ---
+// --- delay dịch chuyển của băng chuyền ---
 const int DELAY_RED_TRAVEL  = 1500; 
 const int DELAY_BLUE_TRAVEL = 3000; 
-const int DELAY_SWEEP_HOLD  = 1000; 
+const int DELAY_SWEEP_HOLD  = 5000; // Tăng thời gian giữ gạt lên 5 giây theo yêu cầu
 
 // --- Biến thời gian Servo bằng MILLIS ---
 enum ServoTaskState { SERVO_IDLE, SERVO_WAITING_TRAVEL, SERVO_HOLDING_SWEEP };
@@ -39,7 +39,6 @@ unsigned long servoActionStartTime = 0;
 int targetAngle = ANGLE_HOME;
 unsigned long currentTravelDelay = 0;
 
-// --- Khai báo các trạng thái WiFi phục vụ hiệu ứng LCD ---
 enum WifiState { STATE_WAITING, STATE_TRYING, STATE_CONNECTED, STATE_AP_MODE };
 WifiState currentWifiState = STATE_WAITING;
 
@@ -54,12 +53,23 @@ const unsigned long requestInterval = 3000;
 bool hasWifiInfo = false; 
 bool errorBlinked = false; 
 
-// trigger từ cảm biến IR
 bool isObjectDetected = false; 
 
-// --- Biến chẩn đoán lỗi kết nối phần cứng ---
-unsigned long lastCamMessageTime = 0; // Thời điểm cuối cùng nhận tin từ CAM
-bool isCamOnline = true;              // Trạng thái hoạt động của CAM
+// --- Biến trạng thái quét màu dừng băng tải ---
+bool isScanning = false;
+unsigned long scanStartTime = 0;
+const unsigned long DELAY_SCAN_TIMEOUT = 4000; // Thời gian tối đa dừng chờ quét màu (4 giây)
+
+// --- Biến trễ dừng băng chuyền khi phát hiện vật ---
+bool pendingScan = false;
+unsigned long irTriggerTime = 0;
+const unsigned long DELAY_STOP_CONVEYOR = 150; // Độ trễ dừng băng chuyền (150ms = 0.15 giây)
+
+// --- Biến kiểm soát dừng băng tải 3 giây khi có màu ---
+bool isConveyorStoppedByGat = false;
+
+unsigned long lastCamMessageTime = 0; // Thời điểm cuối cùng nhận tin từ esp32 Cam
+bool isCamOnline = true;              // Trạng thái hoạt động của esp32 Cam
 bool isLcdConnected = false;          // Trạng thái hoạt động của LCD
 
 void setup() {
@@ -95,7 +105,7 @@ void setup() {
   servoSort.write(ANGLE_HOME);
   
   lastCamMessageTime = millis();
-  Serial.println("\n>>> ESP32 CONTROLLER da mo");
+  Serial.println("\n>>> ESP32 MAIN da mo");
 }
 
 void loop() {
@@ -115,14 +125,19 @@ void loop() {
   int baseSpeed = phanTramPOT * 255; 
 
   int finalSpeed = baseSpeed;
+  // Giảm tốc độ chạy chậm bằng 1/2 khi có vật cản để tránh vật bay ra ngoài
   if (isObjectDetected) {
-    finalSpeed = baseSpeed / 2; // giảm theo phép chia
+    finalSpeed = baseSpeed / 2; 
+  }
+  // Dừng hẳn băng chuyền khi đang trong trạng thái dừng chờ quét màu tĩnh (isScanning) hoặc dừng gạt giữ (isConveyorStoppedByGat)
+  if (isScanning || isConveyorStoppedByGat) {
+    finalSpeed = 0; 
   }
 
   motor.setSpeed(finalSpeed);
-  motor.backward(); 
+  motor.forward(); 
 
-  // Chỉ là hiệu ứng thông báo :D
+  // Chỉ là hiệu ứng thông báo
   if (currentWifiState == STATE_TRYING && isLcdConnected) {
     if (millis() - lastDotTime >= 500) { 
       lastDotTime = millis();
@@ -140,43 +155,59 @@ void loop() {
     }
   }
 
-  // check trạng thái wifi của CAM nếu lệch pha khởi động
+  // check trạng thái wifi của esp32 Cam nếu lệch pha khởi động
   if (!hasWifiInfo && (millis() - lastRequestTime >= requestInterval)) {
     lastRequestTime = millis();
     Serial2.println("REQ:WIFI");
   }
 
-  // ĐỌC DỮ LIỆU UART TỪ ESP32-CAM VÀ TRIGGER
+  // XỬ LÝ TRỄ DỪNG BĂNG CHUYỀN SAU KHI IR TRIGGER
+  if (pendingScan && (millis() - irTriggerTime >= DELAY_STOP_CONVEYOR)) {
+    pendingScan = false;
+    isScanning = true;            // Dừng hẳn băng chuyền để kích hoạt quét màu
+    scanStartTime = millis();     // Lưu mốc thời gian bắt đầu quét màu
+    lastColor = "EMPTY";          // Sẵn sàng đón màu mới
+    if (isLcdConnected) {
+      lcd.setCursor(0, 1);
+      lcd.print("SCANNING...     "); 
+    }
+  }
 
+  // XỬ LÝ NHẢ CỜ DỪNG BĂNG CHUYỀN 3 GIÂY KHI ĐANG GẠT GIỮ
+  if (isConveyorStoppedByGat && (millis() - servoActionStartTime >= 3000)) {
+    isConveyorStoppedByGat = false; // Sau 3 giây, cho băng chuyền chạy lại để đẩy vật đi tiếp
+  }
+
+  // Đọc dữ liệu từ ESP32-CAM
   if (Serial2.available() > 0) {
     String dataCam = Serial2.readStringUntil('\n');
     dataCam.trim(); 
     
     if (dataCam.length() > 0) {
-      lastCamMessageTime = millis(); // Cập nhật mốc thời gian nhận tin nhắn gần nhất từ CAM
+      lastCamMessageTime = millis();
       
-      // Nhận lệnh lỗi khởi động phần cứng của Camera
-      if (dataCam.startsWith("CAM_ERR:")) {
+      if (dataCam == "PING") {
+      }
+      else if (dataCam.startsWith("CAM_ERR:")) {
         String errType = dataCam.substring(8);
         if (errType == "INIT_FAIL") {
-          Serial.println(">>> [LOI CHI MANG] ESP32-CAM bao loi: Khoi dong CAM that bai!");
+          Serial.println(">>> [LOI] ESP32: Khoi dong CAM that bai!");
           if (isLcdConnected) {
             lcd.clear();
             lcd.setCursor(0, 0); lcd.print("CAM INIT FAIL!");
-            lcd.setCursor(0, 1); lcd.print("Check Cam Ribbon");
           }
-          hasWifiInfo = true; // Chặn việc spam REQ:WIFI liên tục khi camera hỏng
+          hasWifiInfo = true;
         }
       }
 
-      // Nhận lệnh từ Cảm biến hồng ngoại nối bên phía ESP32-CAM
       else if (dataCam.startsWith("IR:")) {
         String irStatus = dataCam.substring(3);
         if (irStatus == "TRIGGERED") {
-          isObjectDetected = true; // cờ detect giảm nửa tốc độ băng chuyền
-          if (isLcdConnected) {
-            lcd.setCursor(0, 1);
-            lcd.print("IR: DETECTED    "); 
+          // Kích hoạt tiến trình trễ dừng băng tải thay vì dừng lập tức
+          if (!isScanning && !pendingScan) {
+            pendingScan = true;
+            irTriggerTime = millis();
+            isObjectDetected = true; // Bật cờ giảm tốc độ băng chuyền mượt mà
           }
         }
       }
@@ -196,35 +227,40 @@ void loop() {
 
           if (colorValue == "RED") {
             if (isLcdConnected) lcd.print("RED");
-            targetAngle = ANGLE_HOME;
-            currentTravelDelay = DELAY_RED_TRAVEL;
+            targetAngle = ANGLE_RED;
+            isScanning = false;
+            pendingScan = false;
+            isConveyorStoppedByGat = true; // Dừng băng chuyền lập tức trong 3 giây
+            servoSort.write(targetAngle);  // Gạt ngay lập tức về vị trí Đỏ
             servoActionStartTime = millis();
-            servoState = SERVO_WAITING_TRAVEL; 
+            servoState = SERVO_HOLDING_SWEEP; 
           } 
           else if (colorValue == "BLUE") {
             if (isLcdConnected) lcd.print("BLUE");
             targetAngle = ANGLE_BLUE;
-            currentTravelDelay = DELAY_BLUE_TRAVEL;
+            isScanning = false;
+            pendingScan = false;
+            isConveyorStoppedByGat = true; // Dừng băng chuyền lập tức trong 3 giây
+            servoSort.write(targetAngle);  // Gạt ngay lập tức về vị trí Xanh
             servoActionStartTime = millis();
-            servoState = SERVO_WAITING_TRAVEL; 
+            servoState = SERVO_HOLDING_SWEEP; 
           }
           else if (colorValue == "EMPTY") {
-            if (isLcdConnected) lcd.print("EMPTY");
-            isObjectDetected = false; // Băng chuyền trống -> Trả lại quyền quyết định 100% cho B10K
-            servoSort.write(ANGLE_HOME);
-            servoState = SERVO_IDLE;
+            // Chỉ cho phép xử lý trạng thái rỗng khi không quét, không chờ quét và không gạt giữ
+            if (!isScanning && !pendingScan && servoState == SERVO_IDLE) {
+              if (isLcdConnected) lcd.print("EMPTY");
+              isObjectDetected = false; 
+              servoSort.write(ANGLE_HOME);
+            }
           }
         }
       }
       
-      // (Giữ nguyên các khối xử lý WIFI:TRY, WIFI:IP, WIFI:ERR để hiển thị LCD như cũ của bạn...)
       else if (dataCam.startsWith("WIFI:TRY:")) {
         String newSsid = dataCam.substring(9); 
         
-        // In trạng thái kết nối WiFi ra Serial Monitor cổng COM của máy tính
         Serial.println(">>> [WIFI] Dang thu ket noi mang: " + newSsid);
         
-        // Chỉ so sánh Connect Failed khi cả hai SSID cũ và mới đều là tên WiFi thực tế (bỏ qua trạng thái Reconnecting/Connecting)
         bool isPrevRealSsid = (currentSsid != "" && currentSsid != "Reconnecting..." && currentSsid != "Connecting...");
         bool isNewRealSsid = (newSsid != "" && newSsid != "Reconnecting..." && newSsid != "Connecting...");
         
@@ -263,7 +299,6 @@ void loop() {
           ipAddress = ipContent.substring(colonIdx + 1); 
         }
         
-        // In trạng thái kết nối thành công kèm IP ra Serial Monitor máy tính
         Serial.println(">>> [WIFI] Da ket noi thanh cong! SSID: " + ssidName + " - IP: " + ipAddress);
         
         if (isLcdConnected) {
@@ -285,7 +320,6 @@ void loop() {
           apIp = errContent.substring(colonIdx + 1);
         }
         
-        // In lỗi kết nối và trạng thái AP cứu hộ ra Serial Monitor máy tính
         Serial.println(">>> [WIFI] LOI KET NOI! Tu dong phat AP: " + apSsid + " - IP: " + apIp);
         
         if (!errorBlinked && isLcdConnected) {
@@ -306,40 +340,46 @@ void loop() {
     }
   }
 
-  // --- KIỂM TRA MẤT KẾT NỐI UART VỚI ESP32-CAM ---
-  if (millis() - lastCamMessageTime > 15000) { // 15 giây không có dữ liệu từ ESP32-CAM
+  // --- KIỂM TRA KẾT NỐI VỚI ESP32-CAM ---
+  if (millis() - lastCamMessageTime > 15000) { // 15 giây không có dữ liệu từ esp32 Cam
     if (isCamOnline) {
       isCamOnline = false;
-      Serial.println(">>> [LOI] Mat tin hieu ket noi UART voi ESP32-CAM!");
+      Serial.println(">>> [LOI] Mat tin hieu ket noi UART voi esp32 Cam!");
       if (isLcdConnected) {
         lcd.clear();
         lcd.setCursor(0, 0); lcd.print("CAM OFFLINE!");
-        lcd.setCursor(0, 1); lcd.print("Check RX2/TX2...");
       }
     }
   } else {
     isCamOnline = true;
   }
 
+  // --- KIỂM TRA QUÁ THỜI GIAN CHỜ QUÉT MÀU (SCAN TIMEOUT) ---
+  if (isScanning && (millis() - scanStartTime >= DELAY_SCAN_TIMEOUT)) {
+    isScanning = false;
+    pendingScan = false;
+    isObjectDetected = false;
+    isConveyorStoppedByGat = false;
+    if (isLcdConnected) {
+      lcd.clear();
+      lcd.setCursor(0, 0); lcd.print("Scan Timeout!");
+    }
+    servoSort.write(ANGLE_HOME);
+    servoState = SERVO_IDLE;
+  }
+
   // Xử lý SERVO
-
   switch (servoState) {
-    case SERVO_WAITING_TRAVEL:
-      if (millis() - servoActionStartTime >= currentTravelDelay) {
-        servoSort.write(targetAngle); 
-        servoActionStartTime = millis();
-        servoState = SERVO_HOLDING_SWEEP; 
-      }
-      break;
-
     case SERVO_HOLDING_SWEEP:
       if (millis() - servoActionStartTime >= DELAY_SWEEP_HOLD) {
-        servoSort.write(ANGLE_HOME); 
-        isObjectDetected = false;    // Hoàn thành gạt vật -> Trả lại tốc độ gốc theo biến trở lập tức
+        servoSort.write(ANGLE_HOME); // Trở về vị trí nghỉ trung gian (60 độ) sau khi giữ gạt xong (5 giây)
+        isObjectDetected = false;    // Hoàn thành gạt vật -> Cho phép chạy băng chuyền lại bình thường
+        isConveyorStoppedByGat = false;
         servoState = SERVO_IDLE;      
       }
       break;
 
+    case SERVO_WAITING_TRAVEL:
     case SERVO_IDLE:
     default:
       break;
