@@ -15,9 +15,9 @@ const int CHAN_NHIEU = 15;    // Ngưỡng chặn nhiễu số
 // --- điều chỉnh servo ---
 Servo servoSort;
 const int SERVO_PIN = 18; 
-const int ANGLE_HOME = 60;   // Góc nghỉ trung gian mới
-const int ANGLE_RED  = 10;   // Góc gạt riêng biệt cho vật đỏ
-const int ANGLE_BLUE = 130; 
+const int ANGLE_HOME = 60;
+const int ANGLE_RED  = 5;
+const int ANGLE_BLUE = 120; 
 
 // --- cấu hình motor drive L298N ---
 const int MOTOR_ENB_PIN = 14;
@@ -26,16 +26,14 @@ const int MOTOR_IN4_PIN = 26;
 
 L298N motor(MOTOR_ENB_PIN, MOTOR_IN3_PIN, MOTOR_IN4_PIN);
 
-// --- delay dịch chuyển của băng chuyền ---
-const int DELAY_RED_TRAVEL  = 1500; 
-const int DELAY_BLUE_TRAVEL = 3000; 
-const int DELAY_SWEEP_HOLD  = 5000; // Tăng thời gian giữ gạt lên 5 giây theo yêu cầu
+// --- servo giữ nguyên góc trong 5s ---
+const int DELAY_SERVO  = 5000;
 
 // --- Biến thời gian Servo bằng MILLIS ---
-enum ServoTaskState { SERVO_IDLE, SERVO_WAITING_TRAVEL, SERVO_HOLDING_SWEEP };
+enum ServoTaskState { SERVO_IDLE, SERVO_HOLDING_SWEEP };
 ServoTaskState servoState = SERVO_IDLE;
 
-unsigned long servoActionStartTime = 0;
+unsigned long servoStartTime = 0;
 int targetAngle = ANGLE_HOME;
 unsigned long currentTravelDelay = 0;
 
@@ -63,10 +61,10 @@ const unsigned long DELAY_SCAN_TIMEOUT = 4000; // Thời gian tối đa dừng c
 // --- Biến trễ dừng băng chuyền khi phát hiện vật ---
 bool pendingScan = false;
 unsigned long irTriggerTime = 0;
-const unsigned long DELAY_STOP_CONVEYOR = 150; // Độ trễ dừng băng chuyền (150ms = 0.15 giây)
+const unsigned long DELAY_IR_STOP_BANGCHUYEN = 150; // Độ trễ dừng băng chuyền (150ms)
 
 // --- Biến kiểm soát dừng băng tải 3 giây khi có màu ---
-bool isConveyorStoppedByGat = false;
+bool isStopbyServo = false;
 
 unsigned long lastCamMessageTime = 0; // Thời điểm cuối cùng nhận tin từ esp32 Cam
 bool isCamOnline = true;              // Trạng thái hoạt động của esp32 Cam
@@ -129,8 +127,8 @@ void loop() {
   if (isObjectDetected) {
     finalSpeed = baseSpeed / 2; 
   }
-  // Dừng hẳn băng chuyền khi đang trong trạng thái dừng chờ quét màu tĩnh (isScanning) hoặc dừng gạt giữ (isConveyorStoppedByGat)
-  if (isScanning || isConveyorStoppedByGat) {
+  // Dừng hẳn băng chuyền khi đang trong trạng thái dừng chờ quét màu hoặc dừng gạt giữ
+  if (isScanning || isStopbyServo) {
     finalSpeed = 0; 
   }
 
@@ -155,18 +153,18 @@ void loop() {
     }
   }
 
-  // check trạng thái wifi của esp32 Cam nếu lệch pha khởi động
+  // check trạng thái wifi của esp32 Cam
   if (!hasWifiInfo && (millis() - lastRequestTime >= requestInterval)) {
     lastRequestTime = millis();
     Serial2.println("REQ:WIFI");
   }
 
   // XỬ LÝ TRỄ DỪNG BĂNG CHUYỀN SAU KHI IR TRIGGER
-  if (pendingScan && (millis() - irTriggerTime >= DELAY_STOP_CONVEYOR)) {
+  if (pendingScan && (millis() - irTriggerTime >= DELAY_IR_STOP_BANGCHUYEN)) {
     pendingScan = false;
-    isScanning = true;            // Dừng hẳn băng chuyền để kích hoạt quét màu
+    isScanning = true;
     scanStartTime = millis();     // Lưu mốc thời gian bắt đầu quét màu
-    lastColor = "EMPTY";          // Sẵn sàng đón màu mới
+    lastColor = "EMPTY";
     if (isLcdConnected) {
       lcd.setCursor(0, 1);
       lcd.print("SCANNING...     "); 
@@ -174,8 +172,8 @@ void loop() {
   }
 
   // XỬ LÝ NHẢ CỜ DỪNG BĂNG CHUYỀN 3 GIÂY KHI ĐANG GẠT GIỮ
-  if (isConveyorStoppedByGat && (millis() - servoActionStartTime >= 3000)) {
-    isConveyorStoppedByGat = false; // Sau 3 giây, cho băng chuyền chạy lại để đẩy vật đi tiếp
+  if (isStopbyServo && (millis() - servoStartTime >= 3000)) {
+    isStopbyServo = false; // Sau 3 giây, cho băng chuyền chạy lại để đẩy vật đi tiếp
   }
 
   // Đọc dữ liệu từ ESP32-CAM
@@ -203,7 +201,6 @@ void loop() {
       else if (dataCam.startsWith("IR:")) {
         String irStatus = dataCam.substring(3);
         if (irStatus == "TRIGGERED") {
-          // Kích hoạt tiến trình trễ dừng băng tải thay vì dừng lập tức
           if (!isScanning && !pendingScan) {
             pendingScan = true;
             irTriggerTime = millis();
@@ -230,9 +227,9 @@ void loop() {
             targetAngle = ANGLE_RED;
             isScanning = false;
             pendingScan = false;
-            isConveyorStoppedByGat = true; // Dừng băng chuyền lập tức trong 3 giây
+            isStopbyServo = true; // Dừng băng chuyền lập tức trong 3 giây
             servoSort.write(targetAngle);  // Gạt ngay lập tức về vị trí Đỏ
-            servoActionStartTime = millis();
+            servoStartTime = millis();
             servoState = SERVO_HOLDING_SWEEP; 
           } 
           else if (colorValue == "BLUE") {
@@ -240,9 +237,9 @@ void loop() {
             targetAngle = ANGLE_BLUE;
             isScanning = false;
             pendingScan = false;
-            isConveyorStoppedByGat = true; // Dừng băng chuyền lập tức trong 3 giây
+            isStopbyServo = true; // Dừng băng chuyền lập tức trong 3 giây
             servoSort.write(targetAngle);  // Gạt ngay lập tức về vị trí Xanh
-            servoActionStartTime = millis();
+            servoStartTime = millis();
             servoState = SERVO_HOLDING_SWEEP; 
           }
           else if (colorValue == "EMPTY") {
@@ -325,7 +322,7 @@ void loop() {
         if (!errorBlinked && isLcdConnected) {
           lcd.clear();
           lcd.setCursor(0, 0); lcd.print("All Failed!");
-          lcd.setCursor(0, 1); lcd.print("Switching to AP");
+          lcd.setCursor(0, 1); lcd.print("Switch to AP");
           delay(2500); 
           errorBlinked = true;
         }
@@ -359,7 +356,7 @@ void loop() {
     isScanning = false;
     pendingScan = false;
     isObjectDetected = false;
-    isConveyorStoppedByGat = false;
+    isStopbyServo = false;
     if (isLcdConnected) {
       lcd.clear();
       lcd.setCursor(0, 0); lcd.print("Scan Timeout!");
@@ -371,15 +368,13 @@ void loop() {
   // Xử lý SERVO
   switch (servoState) {
     case SERVO_HOLDING_SWEEP:
-      if (millis() - servoActionStartTime >= DELAY_SWEEP_HOLD) {
-        servoSort.write(ANGLE_HOME); // Trở về vị trí nghỉ trung gian (60 độ) sau khi giữ gạt xong (5 giây)
-        isObjectDetected = false;    // Hoàn thành gạt vật -> Cho phép chạy băng chuyền lại bình thường
-        isConveyorStoppedByGat = false;
+      if (millis() - servoStartTime >= DELAY_SERVO) {
+        servoSort.write(ANGLE_HOME);
+        isObjectDetected = false;
+        isStopbyServo = false;
         servoState = SERVO_IDLE;      
       }
       break;
-
-    case SERVO_WAITING_TRAVEL:
     case SERVO_IDLE:
     default:
       break;
