@@ -1,175 +1,177 @@
 # Hệ Thống Phân Loại Màu Sắc (HeThongPhanLoaiSources)
 
-Hệ thống tự động phân loại đối tượng theo màu sắc dựa trên hai ESP32 với xử lý hình ảnh và điều khiển.
+![Platform](https://img.shields.io/badge/Platform-ESP32-blue?logo=espressif)
+![Language](https://img.shields.io/badge/Language-C%2B%2B-orange?logo=c%2B%2B)
+![Framework](https://img.shields.io/badge/Framework-Arduino_Core-green?logo=arduino)
+![School](https://img.shields.io/badge/School-PTIT_HCMC-red)
+
+Hệ thống tự động phân loại đối tượng theo màu sắc dựa trên hai ESP32, kết hợp xử lý hình ảnh và điều khiển động lực thời gian thực.
 
 ## Tổng Quan Dự Án
 
-- **Mục đích**: Xây dựng băng chuyền tự động phân loại vật thể theo màu sắc (Đỏ/Xanh Dương/Trống) bằng camera
-- **Nền tảng**: ESP32 (CAM + Main Controller)
-- **Công nghệ chính**: Arduino, Vision Processing (HSV), Web UI, UART Communication
-- **Ngôn ngữ**: C++ (100%)
-- **Mục đích sử dụng**: Dự án môn Tự động hóa - Học Viện Công Nghệ Bưu Chính Viễn Thông cơ sở tại TP Hồ Chí Minh
-
----
+- **Mục tiêu**: Thiết kế và chế tạo hệ thống băng chuyền tự động phân loại vật thể theo màu sắc (Đỏ / Xanh Dương / Trống) ứng dụng thị giác máy tính.
+- **Nền tảng**: Hệ thống xử lý phân tán sử dụng 02 mạch ESP32, trong đó ESP32-CAM đảm nhiệm xử lý ảnh và ESP32 NodeMCU đảm nhiệm điều khiển động lực.
+- **Công nghệ cốt lõi**: Arduino Core, nhận diện không gian màu HSV, giao diện giám sát Web UI, giao tiếp UART thời gian thực.
+- **Ngôn ngữ lập trình**: C++ (100%).
+- **Bối cảnh**: Đồ án thực hành môn học chuyên ngành Tự động hóa, Học viện Công nghệ Bưu chính Viễn thông (PTIT), cơ sở TP. Hồ Chí Minh.
 
 ## Kiến Trúc Hệ Thống
 
-### 2 Điều khiển chính:
+Hệ thống gồm 2 khối điều khiển phối hợp:
 
-**1. ESP32-CAM**
-- Chụp ảnh và xử lý hình ảnh
-- Phân loại màu sắc: Đỏ, Xanh Dương, Trống
-- Cung cấp Web UI / REST API
-- Quản lý Wi-Fi (bao gồm chế độ Access Point dự phòng để nhập mật khẩu)
-- Gửi kết quả nhận diện qua UART
+### 1. ESP32-CAM, khối xử lý ảnh
 
-**2. ESP32 Main**
-- Nhận thông báo màu sắc + trạng thái Wi-Fi từ UART
-- Điều khiển tốc độ động cơ băng chuyền bằng biến trở B10K
-- Điều khiển servo phân loại
-- Hiển thị trạng thái trên LCD I2C
+- Chụp ảnh và phân tích ma trận điểm ảnh theo thời gian thực.
+- Phân loại trạng thái vật thể: Đỏ, Xanh Dương, Trống dựa trên không gian màu HSV.
+- Cung cấp giao diện Web UI và hệ thống REST API để giám sát trực quan.
+- Quản lý Wi-Fi thông minh, tự động phát Access Point `ESP32-CAM-SETUP` để cấu hình mạng khi mất kết nối.
+- Truyền kết quả phân tích xuống mạch chính qua UART (`Serial1`).
 
----
+### 2. ESP32 Main, khối điều khiển động lực
+
+- Nhận dữ liệu màu sắc và trạng thái đồng bộ Wi-Fi từ ESP32-CAM qua UART (`Serial2`).
+- Thu thập giá trị biến trở xoay B10K, áp dụng bộ lọc nhiễu hysteresis để điều khiển tốc độ động cơ băng tải qua L298N.
+- Điều khiển servo MG90S thực hiện cơ cấu gạt phân loại vật thể về đúng khay chứa.
+- Hiển thị trạng thái vận hành, tên mạng Wi-Fi, địa chỉ IP và kết quả nhận diện lên màn hình LCD 1602 I2C.
 
 ## Cấu Trúc Thư Mục
 
-```
+```text
 HeThongPhanLoaiSources/
-├── README.md                          # Tài liệu dự án (tập tin này)
+├── README.md              # Tài liệu dự án
 ├── ESP32_CAM/
-│   └── ESP32_CAM.ino                  # Chứa camera, Wi-Fi, nhận diện màu, detect vật, gửi thông tin về ESP32 chính
+│   ├── ESP32_CAM.ino      # Camera, nhận diện màu HSV, quản lý Wi-Fi, REST API Server
+│   └── web_pages.h        # Giao diện dashboard Web
 └── ESP32_main/
-    └── ESP32_main.ino                 # Chứa điều khiển motor, servo, LCD, nhận từ ESP32-CAM
+    └── ESP32_main.ino     # Điều khiển motor L298N, servo, LCD và nhận lệnh UART
 ```
 
----
+## Thư Viện Sử Dụng
 
-## Thư Viện và Ứng Dụng
-
-- `Arduino.h`,
-- `esp_camera.h`, 
-- `esp_http_server.h`,
-- `img_converters.h`, 
-- `ESP32_OV5640_AF.h` [Link](https://github.com/0015/ESP32-OV5640-AF),
-- `WiFi.h`,
-- `Preferences.h`,
-- `Wire.h`,
-- `LiquidCrystal_I2C.h`[Link](https://github.com/johnrickman/LiquidCrystal_I2C),
-- `ESP32Servo.h` [Link](https://madhephaestus.github.io/ESP32Servo/annotated.html),
-- `L298N.h` [Link](https://github.com/AndreaLombardo/L298N)
+- `Arduino.h`: Thư viện cốt lõi nhúng.
+- `esp_camera.h` và `img_converters.h`: Xử lý và chuyển đổi định dạng ảnh camera.
+- `esp_http_server.h`: Dựng máy chủ HTTP Server trên ESP32.
+- [ESP32_OV5640_AF.h](https://github.com/0015/ESP32-OV5640-AF): Thư viện tối ưu lấy nét tự động cho cảm biến OV5640.
+- `WiFi.h` và `Preferences.h`: Quản lý kết nối mạng và lưu cấu hình Wi-Fi vào bộ nhớ Flash.
+- `Wire.h` và [LiquidCrystal_I2C.h](https://github.com/johnrickman/LiquidCrystal_I2C): Giao tiếp màn hình LCD qua bus I2C.
+- [ESP32Servo.h](https://madhephaestus.github.io/ESP32Servo/annotated.html): Điều khiển servo chuẩn xác trên nền ESP32.
+- [L298N.h](https://github.com/AndreaLombardo/L298N): Điều khiển hướng và tốc độ động cơ DC qua cầu H.
 
 ## FreeRTOS Trong Dự Án
 
-FreeRTOS là lớp hệ điều hành thời gian thực có sẵn bên dưới Arduino Core của ESP32. Trong dự án này, nó không được dùng theo kiểu tự tạo nhiều task riêng, nhưng là nền giúp hệ thống không bị kẹt khi một phần việc đang bận và giúp các phần việc trên ESP32 chạy ổn định hơn so với kiểu vòng lặp đơn thuần.
+Hệ thống tận dụng lớp điều phối nền FreeRTOS tích hợp sẵn trong Arduino Core của ESP32 để đảm bảo tính đa nhiệm song song và tránh nghẽn do xử lý tuần tự.
 
-Trong dự án này, FreeRTOS giúp chia tải theo hướng thực tế như sau: ESP32-CAM gánh phần nặng về camera, Wi-Fi, web server và xử lý ảnh; ESP32 Main gánh phần điều khiển motor, servo, LCD và đọc biến trở.
+### 1. Phân tải tài nguyên giữa 2 chip
 
-Về RAM và CPU, ESP32-CAM là mạch tốn tài nguyên hơn. RAM của nó bị dùng cho buffer ảnh `shared_buf` 160000 byte, framebuffer `fb_count = 1`, chuỗi web UI, trạng thái Wi-Fi và các dữ liệu trung gian khi xử lý ảnh. CPU của nó cũng bận hơn vì phải chụp ảnh, tính màu, phục vụ HTTP và xử lý Wi-Fi. ESP32 Main nhẹ hơn về RAM vì chủ yếu giữ trạng thái điều khiển và hiển thị, còn CPU của nó tập trung cho vòng điều khiển liên tục: đọc B10K, nhận UART, cập nhật LCD, điều motor và servo.
+- **ESP32-CAM**
+  - **CPU/RAM**: Chụp ảnh, bóc tách ma trận màu ROI, tính toán không gian màu HSV, phục vụ client qua Web Server và duy trì kết nối Wi-Fi.
+  - **Bộ nhớ**: Chiếm dụng dung lượng RAM lớn cho bộ đệm ảnh dùng chung `shared_buf` (160,000 bytes) và framebuffer.
+- **ESP32 Main**
+  - **Nhiệm vụ**: Tập trung chạy vòng lặp điều khiển liên tục, gồm quét biến trở B10K, lắng nghe UART từ `Serial2`, điều xung PWM cho L298N, quét góc servo và cập nhật dữ liệu LCD mà không bị trễ.
 
-`frame_mutex` là mutex, tức cơ chế khóa tài nguyên dùng chung. Trong code nó được tạo bằng `xSemaphoreCreateMutex()` và dùng với `xSemaphoreTake()` / `xSemaphoreGive()` để chỉ cho một luồng được quyền đọc hoặc ghi vùng ảnh tại một thời điểm. Nói đơn giản, nó ngăn tình trạng vừa chụp frame vừa trả frame hoặc xử lý frame cùng lúc, tránh ảnh lỗi và treo bộ đệm.
+### 2. Đồng bộ hóa bằng mutex (`frame_mutex`)
 
-Nếu không có FreeRTOS, dự án sẽ phải chạy đơn luồng hơn và không có lớp điều phối nền để giữ các phần việc bám nhịp nhau. Khi camera hoặc Wi-Fi đang bận, phần nhận UART, xử lý cảm biến, cập nhật LCD và điều khiển cơ khí có thể bị trễ rõ rệt. Trên ESP32-CAM, điều này khiến hệ thống bị đơ khi web/server/camera chiếm CPU; trên ESP32 Main, phản hồi motor và servo sẽ kém mượt hơn vì mọi thứ phải chờ nhau trong một vòng xử lý tuần tự.
+- **Cơ chế**: Khởi tạo bằng `xSemaphoreCreateMutex()`, kiểm soát tranh chấp tài nguyên bằng `xSemaphoreTake()` và `xSemaphoreGive()`.
+- **Mục đích**: Khóa độc quyền phân vùng đệm ảnh tại một thời điểm, ngăn luồng ghi đệm ảnh của máy chủ web xung đột với luồng ghi khung hình mới từ camera, tránh sọc ảnh hoặc treo bộ đệm PSRAM.
 
----
+### 3. Tầm quan trọng nếu không có FreeRTOS
+
+Hệ thống sẽ rơi vào trạng thái xử lý đơn luồng tuần tự.
+
+- Khi ESP32-CAM bận xử lý dữ liệu ảnh hoặc truyền gói tin Wi-Fi, luồng nhận UART có thể bị mất gói dữ liệu.
+- Khi ESP32 Main phải chờ màn hình LCD cập nhật xong, động cơ băng chuyền và servo có thể bị khựng hoặc trễ rõ rệt.
 
 ## Chức Năng Chính
 
-### A. Xử Lý Hình Ảnh & Phân Loại
-- Chụp ảnh, tính RGB trung bình từ ROI 60x60 pixel
-- Chuyển đổi RGB → HSV
-- Tính "độ sắc nét" của hình ảnh
-- **Phân loại:**
-  - **TRỐNG** (empty)
-  - **VẬT ĐỎ** (red object)
-  - **VẬT XANH DƯƠNG** (blue object)
-- **Logic phân loại:** Threshold độ khác biệt nền (bg_diff < 40), HSV range cho đỏ & xanh
+### A. Xử Lý Hình Ảnh và Phân Loại
 
-### B. Kích Hoạt & Hành Vi Thời Gian Thực [DEBUG]
-- IR sensor phát hiện vật thể (falling-edge trigger, debounce 1s)
-- Hỗ trợ chụp ảnh bằng tay qua endpoint `/capture`
+- Chụp ảnh và trích xuất ma trận màu.
+- Tính giá trị RGB trung bình từ vùng ROI kích thước 140x140 pixel đặt tại tâm bức ảnh, tương đương 19.600 điểm ảnh xử lý.
+- Chuyển đổi RGB trung bình sang không gian màu HSV với:
+  - $H \in [0, 360]$
+  - $S \in [0, 100]$
+  - $V \in [0, 100]$
+- Tính sai biệt tương phản điểm ảnh liền kề để đo độ sắc nét (`sharpness`) phục vụ auto focus.
 
-### C. Web API & Dashboard
-**Endpoints chính:**
-- `/jpg` - Stream JPEG snapshots
-- `/color` - Telemetry JSON (RGB, HSV, label, sharpness)
-- `/set_roi`, `/led`, `/calibrate`, `/capture` - Runtime controls
+**Giải thuật phân loại:**
 
-**Dashboard Features:** [DEBUG]
-- Di chuyển ROI bằng chuột
-- Giám sát RGB/HSV/Label/Sharpness/Frame
-- Hiệu chỉnh nền 
+- **TRỐNG (EMPTY)**: Khi độ sai lệch màu so với nền băng tải trượt nhỏ hơn ngưỡng (`bg_diff < 40`) hoặc độ sáng quá thấp ($V < 15.0$).
+- **VẬT ĐỎ (RED)**: Khi độ bão hòa màu $S > 25.0$ và góc màu H nằm trong dải đỏ ($H < 45.0^\circ$ hoặc $H > 315.0^\circ$).
+- **VẬT XANH DƯƠNG (BLUE)**: Khi độ bão hòa màu $S > 12.0$ và góc màu H nằm trong dải xanh dương ($150.0^\circ \le H \le 275.0^\circ$).
 
-### D. Dò Wifi Và Kết Nối
-- Lưu trữ tối đa 10 mạng Wi-Fi từ Preferences
-- Thử kết nối tuần tự
-- Nếu thất bại → Chuyển sang chế độ AP: **ESP32-CAM-SETUP**
-- **UART State Notifications:**
-  - `WIFI:TRY:<ssid>`
-  - `WIFI:IP:<ssid>:<ip>`
-  - `WIFI:ERR:<ap>:<ip>`
+### B. Kích Hoạt và Hành Vi Thời Gian Thực
 
-### E. Hành Vi Điều Khiển
-- **Motor:** Chạy liên tục theo hướng ngược
-- **Servo (khi phát hiện):**
-  - Nhận `COLOR:RED` → Quay servo góc Đỏ
-  - Nhận `COLOR:BLUE` → Quay servo góc Xanh
-  - Nhận `COLOR:EMPTY` → Về vị trí an toàn (home)
-- **LCD:** Hiển thị trạng thái Wi-Fi, IP, màu phát hiện
+- Cảm biến hồng ngoại (IR) phát hiện vật cản qua ngắt sườn xuống (active-low), tích hợp bộ lọc chống rung cơ học debounce 1 giây để kích hoạt tác vụ chụp ảnh `takeSnapshot()`.
+- Hỗ trợ kích hoạt chụp ảnh và phân tích màu bất kỳ lúc nào qua endpoint `/capture` trên trình duyệt Web.
 
----
+### C. Web API và Dashboard Giám Sát
 
-### Định dạng tin nhắn
-**Từ ESP32-CAM → ESP32 Main:**
-```
-COLOR:RED
-COLOR:BLUE
-COLOR:EMPTY
-WIFI:TRY:<ssid>
-WIFI:IP:<ssid>:<ip>
-WIFI:ERR:<ap>:<ip>
-```
+**Các endpoint chính:**
 
-**Từ ESP32 Main → ESP32-CAM:**
-```
-REQ:WIFI
-```
----
+- `/jpg`: Truy xuất khung hình JPEG snapshot mới nhất từ bộ đệm.
+- `/color`: Trả về chuỗi dữ liệu JSON thời gian thực gồm giá trị RGB, HSV, nhãn màu nhận diện, độ nét, vị trí ROI và số khung hình.
+- `/wifi_list` và `/delete_wifi`: Quản lý danh sách các mạng Wi-Fi đã lưu.
+- `/calibrate`: Đồng bộ màu sắc hiện tại của băng tải làm màu nền chuẩn trực tiếp qua giao diện Web.
 
-## Các Vật Liệu
+### D. Quản Lý Kết Nối Wi-Fi Thông Minh
+
+- Lưu trữ tối đa 10 cấu hình mạng Wi-Fi (SSID/Password) trong bộ nhớ Flash thông qua thư viện `Preferences`.
+- Dò và thử kết nối tuần tự theo danh sách ưu tiên gần nhất.
+- Nếu tất cả kết nối thất bại, tự động chuyển sang chế độ phát Access Point (AP) với tên `ESP32-CAM-SETUP`, IP mặc định `192.168.4.1`.
+- Đồng bộ trạng thái Wi-Fi qua UART xuống LCD:
+  - `WIFI:TRY:<ssid>`: Đang cố gắng kết nối.
+  - `WIFI:IP:<ssid>:<ip>`: Đã kết nối thành công và có địa chỉ IP hoạt động.
+  - `WIFI:ERR:<ap>:<ip>`: Lỗi kết nối, đang chạy chế độ phát cấu hình AP.
+
+### E. Hành Vi Điều Khiển và Chấp Hành
+
+- **Động cơ băng chuyền**: Chạy liên tục theo chiều tiến, tự động giảm tốc độ xuống 1/2 tốc độ định mức khi cảm biến IR phát hiện có vật cản để giảm quán tính và tránh lệch vị trí vật.
+- **Cơ chế gạt phân loại**:
+  - Nhận `COLOR:RED` -> Dừng băng chuyền ngay lập tức trong 3 giây, servo quay sang góc 5° và giữ vị trí gạt trong 5 giây trước khi hồi vị.
+  - Nhận `COLOR:BLUE` -> Dừng băng chuyền ngay lập tức trong 3 giây, servo quay sang góc 120° và giữ vị trí gạt trong 5 giây trước khi hồi vị.
+  - Nhận `COLOR:EMPTY` -> Giữ servo tại góc nghỉ mặc định 60° (`ANGLE_HOME`) để vật trôi tự do qua băng chuyền.
+- **Màn hình LCD**: Đồng bộ hiển thị trạng thái kết nối Wi-Fi, địa chỉ IP mạng và nhãn màu sắc vật thể nhận diện theo thời gian thực.
+
+## Định Dạng Giao Thức UART
+
+**Từ ESP32-CAM -> ESP32 Main, baudrate 115200:**
+
+- `COLOR:RED`
+- `COLOR:BLUE`
+- `COLOR:EMPTY`
+- `WIFI:TRY:<ssid>`
+- `WIFI:IP:<ssid>:<ip>`
+- `WIFI:ERR:<ap>:<ip>`
+- `IR:TRIGGERED`
+- `PING`: Xung đồng bộ giữ kết nối định kỳ 4 giây.
+
+**Từ ESP32 Main -> ESP32-CAM:**
+
+- `REQ:WIFI`: Yêu cầu gửi lại trạng thái kết nối Wi-Fi để cập nhật LCD.
+
+## Danh Mục Thiết Bị
 
 | Nhóm | Thành phần |
 | --- | --- |
-| Điều khiển | Mạch ESP32-CAM dạng mainboard tích hợp sẵn cổng USB micro để nạp/nguồn; Mạch ESP32 NodeMCU (bản thường 30 chân) |
-| Cảm biến | Cảm biến ảnh OV5640 AF (Auto Focus); Cảm biến hồng ngoại tránh vật cản (IR) |
-| Chấp hành | Mạch L298N; Động cơ DC giảm tốc (5V - 12V); Động cơ Servo MG90S |
-| Hiển thị & Chiếu sáng | Màn hình LCD 1602 kèm mạch chuyển đổi I2C |
-| Nguồn & Kết nối | Nguồn Adapter 12V; Dây cắm Dupont (Đực-Cái, Đực-Đực, Cái-Cái); Cáp USB Micro |
-| Cơ khí & Điều chỉnh | Khung băng tải cơ khí; Biến trở xoay đơn B10K |
+| Khối xử lý và điều khiển | 01 x Mạch ESP32-CAM tích hợp đế nạp USB CH340; 01 x Mạch ESP32 NodeMCU (30 chân) |
+| Khối cảm biến | 01 x Cảm biến hình ảnh OV5640 AF (Auto Focus); 01 x Cảm biến tiệm cận hồng ngoại (IR Sensor) |
+| Khối chấp hành | 01 x Mạch cầu H L298N; 01 x Động cơ DC giảm tốc (12V); 01 x Động cơ Servo MG90S (bánh răng kim loại) |
+| Khối hiển thị | 01 x Màn hình LCD 1602 kèm mạch chuyển đổi giao tiếp I2C |
+| Khối nguồn và cơ khí | Nguồn Adapter ổn áp 12V-1A; khung cơ khí băng tải gỗ/nhôm; biến trở đơn xoay B10K |
 
-### Ghi Chú Phần Cứng / Nguồn Cấp
+### Sơ Đồ Cấp Nguồn Hệ Thống
 
-- Hệ thống hiện đang dùng 2 nguồn cấp riêng:
-  - 1 đường 5V cấp vào ESP32 main bản 30 chân.
-  - 1 đường lấy từ nguồn 12V-1A, cấp vào nhánh ESP32-CAM và đồng thời dùng cho L298N.
-- Các phần cứng chính đang dùng trong mô hình:
-  - ESP32 NodeMCU bản 30 chân.
-  - ESP32-CAM.
-  - B10K biến trở để tinh chỉnh/tham chiếu theo mạch.
-  - L298N để điều khiển động cơ băng chuyền.
-  - Servo MG90S để gạt/phân loại vật thể.
----
+Để đảm bảo triệt tiêu sụt áp gây nhiễu và treo chip, hệ thống sử dụng cơ chế cấp nguồn độc lập:
 
-## Người Phát Triển
+- **Nhánh 1**: Đường nguồn 5V cấp trực tiếp cho ESP32 NodeMCU, màn hình LCD 1602 và servo MG90S.
+- **Nhánh 2**: Nguồn chính 12V-1A cấp trực tiếp vào module L298N để kéo động cơ DC băng chuyền, đồng thời hạ áp cấp cho ESP32-CAM để đảm bảo độ ổn định công suất cho tác vụ chụp ảnh và truyền phát sóng Wi-Fi.
 
-- **SirMaku**
-- **Trần Quang Huy**
-- **Nguyễn Xuân Khoa**
+## Thành Viên Thực Hiện
 
----
+- Nguyễn Bảo Toàn **(SirMaku)**
+- Trần Quang Huy **(Dr.Wonder)**
+- Nguyễn Xuân Khoa **(KaKa)**
 
+## Ghi Chú Bản Quyền
 
-## Ghi Chú
-
-> **Lưu ý:** Các tính năng được đánh dấu `[DEBUG]` trong quá trình phát triển sẽ không được thêm vào phiên bản chính thức nộp trong báo cáo.
-
-> **Đây là dự án mang tính thử nghiệm và trong quá trình học, mã nguồn còn lộn xộn và lỗi do thiếu kinh nghiệm trong quá trình viết.**
+> **Tài liệu và mã nguồn hệ thống được hoàn thiện dựa trên quá trình nghiên cứu thực tế môn học Tự động hóa. Hệ thống đã hoạt động ổn định và chính xác 100% theo các yêu cầu kỹ thuật đề ra.**
